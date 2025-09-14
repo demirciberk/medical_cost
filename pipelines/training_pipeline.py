@@ -2,7 +2,10 @@ from zenml import pipeline, step, Model
 from steps.data_loading_step import data_loader
 from steps.data_splitter_step import data_splitter_step
 from steps.feature_engineering_step import feature_engineering_step
+from steps.target_transformer_step import target_transformer_step
 from steps.transformer_step import transformer_step
+from steps.model_building_step import model_building_step
+from steps.model_evaluator_step import model_evaluator_step
 
 @pipeline(model = Model(name='cost_predictor'),)
 def training_pipeline():
@@ -20,7 +23,18 @@ def training_pipeline():
     # One-hot encoding for 'region' column
     X_train_transformed, ohe_encoder = feature_engineering_step(df=X_train_binary_transformed, strategy="onehot_encoding", features=["region"])
     X_test_transformed = transformer_step(df=X_test_binary_transformed, engineer=ohe_encoder)
-    return X_train_transformed, X_test_transformed, y_train, y_test
+
+    # Log transform target variable
+    y_train_transformed = target_transformer_step(target=y_train)
+    y_test_transformed = target_transformer_step(target=y_test)
+
+    model = model_building_step(X_train=X_train, y_train=y_train)
+
+    evaluation_metrics, mse = model_evaluator_step(
+        trained_model=model, X_test=X_test, y_test=y_test
+    )
+
+    return model
     
 if __name__ == "__main__":
     run = training_pipeline()
