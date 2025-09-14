@@ -1,0 +1,102 @@
+from functools import wraps
+from typing import Awaitable, Callable, Optional, AsyncIterator
+
+from ..errors import MLServerError
+from ..model import MLModel
+from ..types import InferenceRequest, InferenceResponse
+from ..utils import get_wrapped_method
+from .adaptive import AdaptiveBatcher
+from ..logging import logger
+
+_AdaptiveBatchingAttr = "__adaptive_batching__"
+
+
+class InvalidBatchingMethod(MLServerError):
+    def __init__(self, method_name: str, reason: Optional[str] = None):
+        msg = f"Method {method_name} can't be used for adaptive batching"
+        if reason:
+            msg += f": {reason}"
+
+        super().__init__(msg)
+
+
+def _get_batcher(f: Callable) -> AdaptiveBatcher:
+    wrapped_f = get_wrapped_method(f)
+    model = _get_model(f)
+
+    if not hasattr(model, _AdaptiveBatchingAttr):
+        raise InvalidBatchingMethod(
+            wrapped_f.__name__, reason="adaptive batching has not been loaded"
+        )
+
+    return getattr(model, _AdaptiveBatchingAttr)
+
+
+def _get_model(f: Callable) -> MLModel:
+    wrapped_f = get_wrapped_method(f)
+    if not hasattr(wrapped_f, "__self__"):
+        raise InvalidBatchingMethod(wrapped_f.__name__, reason="method is not bound")
+
+    return getattr(wrapped_f, "__self__")
+
+
+def adaptive_batching(f: Callable[[InferenceRequest], Awaitable[InferenceResponse]]):
+    """
+    Decorator for the `predict()` method which will ensure it uses the
+    underlying adaptive batcher instance.
+    """
+
+    @wraps(f)
+    async def _inner(payload: InferenceRequest) -> InferenceResponse:
+        batcher = _get_batcher(f)
+        return await batcher.predict(payload)
+
+    return _inner
+
+
+def not_implemented_warning(
+    f: Callable[[AsyncIterator[InferenceRequest]], AsyncIterator[InferenceResponse]],
+):
+    """
+    Decorator to lets users know that adaptive batching is not required on
+    method `f`.
+    """
+    model = _get_model(f)
+    logger.warning(
+        f"Adaptive Batching is enabled for model '{model.name}'"
+        " but not supported for inference streaming."
+        " Falling back to non-batched inference streaming."
+    )
+
+    @wraps(f)
+    async def _inner_stream(
+        payload: AsyncIterator[InferenceRequest],
+    ) -> AsyncIterator[InferenceResponse]:
+        async for response in f(payload):
+            yield response
+
+    return _inner_stream
+
+
+async def load_batching(model: MLModel) -> MLModel:
+    if model.settings.max_batch_size <= 1:
+        return model
+
+    if model.settings.max_batch_time <= 0:
+        return model
+
+    if model.settings.max_batch_size > 1 and model.settings.max_batch_time <= 0:
+        logger.warning(
+            "Setting max_batch_time equal to zero will result"
+            " in batching having no effect, if you intend to "
+            "use batching try setting it to a value > 0 for"
+            " batching to take effect"
+        )
+
+    batcher = AdaptiveBatcher(model)
+    setattr(model, _AdaptiveBatchingAttr, batcher)
+
+    # Decorate predict methods
+    setattr(model, "predict", adaptive_batching(model.predict))
+    setattr(model, "predict_stream", not_implemented_warning(model.predict_stream))
+    return model

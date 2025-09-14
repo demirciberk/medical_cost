@@ -1,0 +1,1 @@
+import{j as o}from"./@radix-CliVkFaa.js";function s({dateString:t,short:n=!1}){const e=new Date(`${t}Z`);return o.jsx(o.Fragment,{children:n?i(e):e.toLocaleString()})}function i(t){const n={month:"short",day:"numeric",year:"numeric"},e={hour:"numeric",minute:"numeric",hour12:!1},r=t.toLocaleDateString("en-US",n),a=t.toLocaleTimeString("en-US",e);return`${r} ${a}`}export{s as D};

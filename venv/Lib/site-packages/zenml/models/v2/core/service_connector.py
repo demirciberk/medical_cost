@@ -1,0 +1,1124 @@
+#  Copyright (c) ZenML GmbH 2023. All Rights Reserved.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at:
+#
+#       https://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+#  or implied. See the License for the specific language governing
+#  permissions and limitations under the License.
+"""Models representing service connectors."""
+
+import json
+from datetime import datetime
+from typing import Any, ClassVar, Dict, List, Optional, Union
+
+from pydantic import (
+    Field,
+    GetCoreSchemaHandler,
+    SecretStr,
+    ValidationError,
+    model_validator,
+)
+from pydantic_core import CoreSchema, core_schema
+
+from zenml.constants import STR_FIELD_MAX_LENGTH
+from zenml.logger import get_logger
+from zenml.models.v2.base.base import BaseUpdate
+from zenml.models.v2.base.scoped import (
+    UserScopedFilter,
+    UserScopedRequest,
+    UserScopedResponse,
+    UserScopedResponseBody,
+    UserScopedResponseMetadata,
+    UserScopedResponseResources,
+)
+from zenml.models.v2.misc.service_connector_type import (
+    ServiceConnectorTypeModel,
+)
+from zenml.utils.secret_utils import PlainSerializedSecretStr
+
+logger = get_logger(__name__)
+
+# ------------------ Configuration Model ------------------
+
+
+class ServiceConnectorConfiguration(Dict[str, Any]):
+    """Model for service connector configuration."""
+
+    @classmethod
+    def from_dict(
+        cls, data: Dict[str, Any]
+    ) -> "ServiceConnectorConfiguration":
+        """Create a configuration model from a dictionary.
+
+        Args:
+            data: The dictionary to create the configuration model from.
+
+        Returns:
+            A configuration model.
+        """
+        return cls(**data)
+
+    @property
+    def secrets(self) -> Dict[str, PlainSerializedSecretStr]:
+        """Get the secrets from the configuration.
+
+        Returns:
+            A dictionary of secrets.
+        """
+        return {k: v for k, v in self.items() if isinstance(v, SecretStr)}
+
+    @property
+    def plain_secrets(self) -> Dict[str, str]:
+        """Get the plain secrets from the configuration.
+
+        Returns:
+            A dictionary of secrets.
+        """
+        return {
+            k: v.get_secret_value()
+            for k, v in self.items()
+            if isinstance(v, SecretStr)
+        }
+
+    @property
+    def non_secrets(self) -> Dict[str, Any]:
+        """Get the non-secrets from the configuration.
+
+        Returns:
+            A dictionary of non-secrets.
+        """
+        return {k: v for k, v in self.items() if not isinstance(v, SecretStr)}
+
+    @property
+    def plain(self) -> Dict[str, Any]:
+        """Get the configuration with secrets unpacked.
+
+        Returns:
+            A dictionary of configuration with secrets unpacked.
+        """
+        return {
+            k: v.get_secret_value() if isinstance(v, SecretStr) else v
+            for k, v in self.items()
+        }
+
+    def get_plain(self, key: str, default: Any = None) -> Any:
+        """Get the plain value for the given key.
+
+        Args:
+            key: The key to get the value for.
+            default: The default value to return if the key is not found.
+
+        Returns:
+            The plain value for the given key.
+        """
+        result = self.get(key, default)
+        if isinstance(result, SecretStr):
+            return result.get_secret_value()
+        return result
+
+    def add_secrets(self, secrets: Dict[str, str]) -> None:
+        """Add the secrets to the configuration.
+
+        Args:
+            secrets: The secrets to add to the configuration.
+        """
+        self.update({k: SecretStr(v) for k, v in secrets.items()})
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source_type: Any, handler: GetCoreSchemaHandler
+    ) -> CoreSchema:
+        """Additional method for pydantic to recognize it as a valid type.
+
+        Args:
+            source_type: the source type
+            handler: the handler
+
+        Returns:
+            the schema for the custom type.
+        """
+        return core_schema.no_info_after_validator_function(
+            cls,
+            handler(
+                core_schema.dict_schema(
+                    keys_schema=core_schema.str_schema(),
+                    values_schema=core_schema.any_schema(),
+                )
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                lambda v: v.plain,
+                when_used="json",
+            ),
+        )
+
+
+# ------------------ Request Model ------------------
+
+
+class ServiceConnectorRequest(UserScopedRequest):
+    """Request model for service connectors."""
+
+    name: str = Field(
+        title="The service connector name.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    connector_type: Union[str, "ServiceConnectorTypeModel"] = Field(
+        title="The type of service connector.",
+        union_mode="left_to_right",
+    )
+    description: str = Field(
+        default="",
+        title="The service connector instance description.",
+    )
+    auth_method: str = Field(
+        title="The authentication method that the connector instance uses to "
+        "access the resources.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    resource_types: List[str] = Field(
+        default_factory=list,
+        title="The type(s) of resource that the connector instance can be used "
+        "to gain access to.",
+    )
+    resource_id: Optional[str] = Field(
+        default=None,
+        title="Uniquely identifies a specific resource instance that the "
+        "connector instance can be used to access. If omitted, the connector "
+        "instance can be used to access any and all resource instances that "
+        "the authentication method and resource type(s) allow.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    supports_instances: bool = Field(
+        default=False,
+        title="Indicates whether the connector instance can be used to access "
+        "multiple instances of the configured resource type.",
+    )
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        title="Time when the authentication credentials configured for the "
+        "connector expire. If omitted, the credentials do not expire.",
+    )
+    expires_skew_tolerance: Optional[int] = Field(
+        default=None,
+        title="The number of seconds of tolerance to apply when checking "
+        "whether the authentication credentials configured for the connector "
+        "have expired. If omitted, no tolerance is applied.",
+    )
+    expiration_seconds: Optional[int] = Field(
+        default=None,
+        title="The duration, in seconds, that the temporary credentials "
+        "generated by this connector should remain valid. Only applicable for "
+        "connectors and authentication methods that involve generating "
+        "temporary credentials from the ones configured in the connector.",
+    )
+    configuration: ServiceConnectorConfiguration = Field(
+        default_factory=ServiceConnectorConfiguration,
+        title="The service connector configuration.",
+    )
+    labels: Dict[str, str] = Field(
+        default_factory=dict,
+        title="Service connector labels.",
+    )
+
+    # Analytics
+    ANALYTICS_FIELDS: ClassVar[List[str]] = [
+        "connector_type",
+        "auth_method",
+        "resource_types",
+    ]
+
+    def get_analytics_metadata(self) -> Dict[str, Any]:
+        """Format the resource types in the analytics metadata.
+
+        Returns:
+            Dict of analytics metadata.
+        """
+        metadata = super().get_analytics_metadata()
+        if len(self.resource_types) == 1:
+            metadata["resource_types"] = self.resource_types[0]
+        else:
+            metadata["resource_types"] = ", ".join(self.resource_types)
+        metadata["connector_type"] = self.type
+        return metadata
+
+    # Helper methods
+    @property
+    def type(self) -> str:
+        """Get the connector type.
+
+        Returns:
+            The connector type.
+        """
+        if isinstance(self.connector_type, str):
+            return self.connector_type
+        return self.connector_type.connector_type
+
+    @property
+    def emojified_connector_type(self) -> str:
+        """Get the emojified connector type.
+
+        Returns:
+            The emojified connector type.
+        """
+        if not isinstance(self.connector_type, str):
+            return self.connector_type.emojified_connector_type
+
+        return self.connector_type
+
+    @property
+    def emojified_resource_types(self) -> List[str]:
+        """Get the emojified connector type.
+
+        Returns:
+            The emojified connector type.
+        """
+        if not isinstance(self.connector_type, str):
+            return [
+                self.connector_type.resource_type_dict[
+                    resource_type
+                ].emojified_resource_type
+                for resource_type in self.resource_types
+            ]
+
+        return self.resource_types
+
+    def validate_and_configure_resources(
+        self,
+        connector_type: "ServiceConnectorTypeModel",
+        resource_types: Optional[Union[str, List[str]]] = None,
+        resource_id: Optional[str] = None,
+        configuration: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Validate and configure the resources that the connector can be used to access.
+
+        Args:
+            connector_type: The connector type specification used to validate
+                the connector configuration.
+            resource_types: The type(s) of resource that the connector instance
+                can be used to access. If omitted, a multi-type connector is
+                configured.
+            resource_id: Uniquely identifies a specific resource instance that
+                the connector instance can be used to access.
+            configuration: The connector configuration.
+        """
+        _validate_and_configure_resources(
+            connector=self,
+            connector_type=connector_type,
+            resource_types=resource_types,
+            resource_id=resource_id,
+            configuration=configuration,
+        )
+
+
+# ------------------ Update Model ------------------
+
+
+class ServiceConnectorUpdate(BaseUpdate):
+    """Model used for service connector updates.
+
+    Most fields in the update model are optional and will not be updated if
+    omitted. However, the following fields are "special" and leaving them out
+    will also cause the corresponding value to be removed from the service
+    connector in the database:
+
+    * the `resource_id` field
+    * the `expiration_seconds` field
+
+    In addition to the above exceptions, the following rules apply:
+
+    * the `configuration` field represents a full valid configuration update,
+    not just a partial update. If it is set (i.e. not None) in the update,
+    its values will replace the existing configuration values.
+    * the `labels` field is also a full labels update: if set (i.e. not
+    `None`), all existing labels are removed and replaced by the new labels
+    in the update.
+
+    NOTE: the attributes here override the ones in the base class, so they
+    have a None default value.
+    """
+
+    name: Optional[str] = Field(
+        title="The service connector name.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    connector_type: Optional[Union[str, "ServiceConnectorTypeModel"]] = Field(
+        title="The type of service connector.",
+        default=None,
+        union_mode="left_to_right",
+    )
+    description: Optional[str] = Field(
+        title="The service connector instance description.",
+        default=None,
+    )
+    auth_method: Optional[str] = Field(
+        title="The authentication method that the connector instance uses to "
+        "access the resources.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    resource_types: Optional[List[str]] = Field(
+        title="The type(s) of resource that the connector instance can be used "
+        "to gain access to.",
+        default=None,
+    )
+    resource_id: Optional[str] = Field(
+        title="Uniquely identifies a specific resource instance that the "
+        "connector instance can be used to access. If omitted, the "
+        "connector instance can be used to access any and all resource "
+        "instances that the authentication method and resource type(s) "
+        "allow.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    supports_instances: Optional[bool] = Field(
+        title="Indicates whether the connector instance can be used to access "
+        "multiple instances of the configured resource type.",
+        default=None,
+    )
+    expires_at: Optional[datetime] = Field(
+        title="Time when the authentication credentials configured for the "
+        "connector expire. If omitted, the credentials do not expire.",
+        default=None,
+    )
+    expires_skew_tolerance: Optional[int] = Field(
+        title="The number of seconds of tolerance to apply when checking "
+        "whether the authentication credentials configured for the "
+        "connector have expired. If omitted, no tolerance is applied.",
+        default=None,
+    )
+    expiration_seconds: Optional[int] = Field(
+        title="The duration, in seconds, that the temporary credentials "
+        "generated by this connector should remain valid. Only "
+        "applicable for connectors and authentication methods that "
+        "involve generating temporary credentials from the ones "
+        "configured in the connector.",
+        default=None,
+    )
+    configuration: Optional[ServiceConnectorConfiguration] = Field(
+        title="The service connector full configuration replacement.",
+        default=None,
+    )
+    labels: Optional[Dict[str, str]] = Field(
+        title="Service connector labels.",
+        default=None,
+    )
+
+    # Analytics
+    ANALYTICS_FIELDS: ClassVar[List[str]] = [
+        "connector_type",
+        "auth_method",
+        "resource_types",
+    ]
+
+    def get_analytics_metadata(self) -> Dict[str, Any]:
+        """Format the resource types in the analytics metadata.
+
+        Returns:
+            Dict of analytics metadata.
+        """
+        metadata = super().get_analytics_metadata()
+
+        if self.resource_types is not None:
+            if len(self.resource_types) == 1:
+                metadata["resource_types"] = self.resource_types[0]
+            else:
+                metadata["resource_types"] = ", ".join(self.resource_types)
+
+        if self.connector_type is not None:
+            metadata["connector_type"] = self.type
+
+        return metadata
+
+    # Helper methods
+    @property
+    def type(self) -> Optional[str]:
+        """Get the connector type.
+
+        Returns:
+            The connector type.
+        """
+        if self.connector_type is not None:
+            if isinstance(self.connector_type, str):
+                return self.connector_type
+            return self.connector_type.connector_type
+        return None
+
+    def validate_and_configure_resources(
+        self,
+        connector_type: "ServiceConnectorTypeModel",
+        resource_types: Optional[Union[str, List[str]]] = None,
+        resource_id: Optional[str] = None,
+        configuration: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Validate and configure the resources that the connector can be used to access.
+
+        Args:
+            connector_type: The connector type specification used to validate
+                the connector configuration.
+            resource_types: The type(s) of resource that the connector instance
+                can be used to access. If omitted, a multi-type connector is
+                configured.
+            resource_id: Uniquely identifies a specific resource instance that
+                the connector instance can be used to access.
+            configuration: The connector configuration.
+        """
+        _validate_and_configure_resources(
+            connector=self,
+            connector_type=connector_type,
+            resource_types=resource_types,
+            resource_id=resource_id,
+            configuration=configuration,
+        )
+
+    def convert_to_request(self) -> "ServiceConnectorRequest":
+        """Method to generate a service connector request object from self.
+
+        For certain operations, the service connector update model need to
+        adhere to the limitations set by the request model. In order to use
+        update models in such situations, we need to be able to convert an
+        update model into a request model.
+
+        Returns:
+            The equivalent request model
+
+        Raises:
+            RuntimeError: if the model can not be converted to a request model.
+        """
+        try:
+            return ServiceConnectorRequest.model_validate(self.model_dump())
+        except ValidationError as e:
+            raise RuntimeError(
+                "The service connector update model can not be converted into "
+                f"an equivalent request model: {e}"
+            )
+
+
+# ------------------ Response Model ------------------
+
+
+class ServiceConnectorResponseBody(UserScopedResponseBody):
+    """Response body for service connectors."""
+
+    description: str = Field(
+        default="",
+        title="The service connector instance description.",
+    )
+    connector_type: Union[str, "ServiceConnectorTypeModel"] = Field(
+        title="The type of service connector.", union_mode="left_to_right"
+    )
+    auth_method: str = Field(
+        title="The authentication method that the connector instance uses to "
+        "access the resources.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    resource_types: List[str] = Field(
+        default_factory=list,
+        title="The type(s) of resource that the connector instance can be used "
+        "to gain access to.",
+    )
+    resource_id: Optional[str] = Field(
+        default=None,
+        title="Uniquely identifies a specific resource instance that the "
+        "connector instance can be used to access. If omitted, the connector "
+        "instance can be used to access any and all resource instances that "
+        "the authentication method and resource type(s) allow.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    supports_instances: bool = Field(
+        default=False,
+        title="Indicates whether the connector instance can be used to access "
+        "multiple instances of the configured resource type.",
+    )
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        title="Time when the authentication credentials configured for the "
+        "connector expire. If omitted, the credentials do not expire.",
+    )
+    expires_skew_tolerance: Optional[int] = Field(
+        default=None,
+        title="The number of seconds of tolerance to apply when checking "
+        "whether the authentication credentials configured for the connector "
+        "have expired. If omitted, no tolerance is applied.",
+    )
+
+
+class ServiceConnectorResponseMetadata(UserScopedResponseMetadata):
+    """Response metadata for service connectors."""
+
+    configuration: ServiceConnectorConfiguration = Field(
+        default_factory=ServiceConnectorConfiguration,
+        title="The service connector configuration.",
+    )
+    expiration_seconds: Optional[int] = Field(
+        default=None,
+        title="The duration, in seconds, that the temporary credentials "
+        "generated by this connector should remain valid. Only applicable for "
+        "connectors and authentication methods that involve generating "
+        "temporary credentials from the ones configured in the connector.",
+    )
+    labels: Dict[str, str] = Field(
+        default_factory=dict,
+        title="Service connector labels.",
+    )
+
+
+class ServiceConnectorResponseResources(UserScopedResponseResources):
+    """Class for all resource models associated with the service connector entity."""
+
+
+class ServiceConnectorResponse(
+    UserScopedResponse[
+        ServiceConnectorResponseBody,
+        ServiceConnectorResponseMetadata,
+        ServiceConnectorResponseResources,
+    ]
+):
+    """Response model for service connectors."""
+
+    # Disable the warning for updating responses, because we update the
+    # service connector type in place
+    _warn_on_response_updates: bool = False
+
+    name: str = Field(
+        title="The service connector name.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+
+    def get_analytics_metadata(self) -> Dict[str, Any]:
+        """Add the service connector labels to analytics metadata.
+
+        Returns:
+            Dict of analytics metadata.
+        """
+        metadata = super().get_analytics_metadata()
+
+        metadata.update(
+            {
+                label[6:]: value
+                for label, value in self.labels.items()
+                if label.startswith("zenml:")
+            }
+        )
+        return metadata
+
+    def get_hydrated_version(self) -> "ServiceConnectorResponse":
+        """Get the hydrated version of this service connector.
+
+        Returns:
+            an instance of the same entity with the metadata field attached.
+        """
+        from zenml.client import Client
+
+        return Client().zen_store.get_service_connector(self.id)
+
+    # Helper methods
+    @property
+    def type(self) -> str:
+        """Get the connector type.
+
+        Returns:
+            The connector type.
+        """
+        if isinstance(self.connector_type, str):
+            return self.connector_type
+        return self.connector_type.connector_type
+
+    @property
+    def emojified_connector_type(self) -> str:
+        """Get the emojified connector type.
+
+        Returns:
+            The emojified connector type.
+        """
+        if not isinstance(self.connector_type, str):
+            return self.connector_type.emojified_connector_type
+
+        return self.connector_type
+
+    @property
+    def emojified_resource_types(self) -> List[str]:
+        """Get the emojified connector type.
+
+        Returns:
+            The emojified connector type.
+        """
+        if not isinstance(self.connector_type, str):
+            return [
+                self.connector_type.resource_type_dict[
+                    resource_type
+                ].emojified_resource_type
+                for resource_type in self.resource_types
+            ]
+
+        return self.resource_types
+
+    @property
+    def is_multi_type(self) -> bool:
+        """Checks if the connector is multi-type.
+
+        A multi-type connector can be used to access multiple types of
+        resources.
+
+        Returns:
+            True if the connector is multi-type, False otherwise.
+        """
+        return len(self.resource_types) > 1
+
+    @property
+    def is_multi_instance(self) -> bool:
+        """Checks if the connector is multi-instance.
+
+        A multi-instance connector is configured to access multiple instances
+        of the configured resource type.
+
+        Returns:
+            True if the connector is multi-instance, False otherwise.
+        """
+        return (
+            not self.is_multi_type
+            and self.supports_instances
+            and not self.resource_id
+        )
+
+    @property
+    def is_single_instance(self) -> bool:
+        """Checks if the connector is single-instance.
+
+        A single-instance connector is configured to access only a single
+        instance of the configured resource type or does not support multiple
+        resource instances.
+
+        Returns:
+            True if the connector is single-instance, False otherwise.
+        """
+        return not self.is_multi_type and not self.is_multi_instance
+
+    def set_connector_type(
+        self, value: Union[str, "ServiceConnectorTypeModel"]
+    ) -> None:
+        """Auxiliary method to set the connector type.
+
+        Args:
+            value: the new value for the connector type.
+        """
+        self.get_body().connector_type = value
+
+    def validate_configuration(self) -> None:
+        """Validate the configuration of the connector."""
+        if isinstance(self.connector_type, ServiceConnectorTypeModel):
+            self.validate_and_configure_resources(
+                connector_type=self.connector_type,
+                resource_types=self.resource_types,
+                resource_id=self.resource_id,
+                configuration=self.configuration,
+            )
+
+    def validate_and_configure_resources(
+        self,
+        connector_type: "ServiceConnectorTypeModel",
+        resource_types: Optional[Union[str, List[str]]] = None,
+        resource_id: Optional[str] = None,
+        configuration: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Validate and configure the resources that the connector can be used to access.
+
+        Args:
+            connector_type: The connector type specification used to validate
+                the connector configuration.
+            resource_types: The type(s) of resource that the connector instance
+                can be used to access. If omitted, a multi-type connector is
+                configured.
+            resource_id: Uniquely identifies a specific resource instance that
+                the connector instance can be used to access.
+            configuration: The connector configuration.
+        """
+        _validate_and_configure_resources(
+            connector=self,
+            connector_type=connector_type,
+            resource_types=resource_types,
+            resource_id=resource_id,
+            configuration=configuration,
+        )
+
+    # Body and metadata properties
+    @property
+    def description(self) -> str:
+        """The `description` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().description
+
+    @property
+    def connector_type(self) -> Union[str, "ServiceConnectorTypeModel"]:
+        """The `connector_type` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().connector_type
+
+    @property
+    def auth_method(self) -> str:
+        """The `auth_method` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().auth_method
+
+    @property
+    def resource_types(self) -> List[str]:
+        """The `resource_types` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().resource_types
+
+    @property
+    def resource_id(self) -> Optional[str]:
+        """The `resource_id` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().resource_id
+
+    @property
+    def supports_instances(self) -> bool:
+        """The `supports_instances` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().supports_instances
+
+    @property
+    def expires_at(self) -> Optional[datetime]:
+        """The `expires_at` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().expires_at
+
+    @property
+    def expires_skew_tolerance(self) -> Optional[int]:
+        """The `expires_skew_tolerance` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().expires_skew_tolerance
+
+    @property
+    def configuration(self) -> ServiceConnectorConfiguration:
+        """The `configuration` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().configuration
+
+    def remove_secrets(self) -> None:
+        """Remove the secrets from the configuration."""
+        metadata = self.get_metadata()
+        metadata.configuration = ServiceConnectorConfiguration(
+            **metadata.configuration.non_secrets
+        )
+
+    def add_secrets(self, secrets: Dict[str, str]) -> None:
+        """Add the secrets to the configuration.
+
+        Args:
+            secrets: The secrets to add to the configuration.
+        """
+        self.get_metadata().configuration.add_secrets(secrets)
+
+    @property
+    def expiration_seconds(self) -> Optional[int]:
+        """The `expiration_seconds` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().expiration_seconds
+
+    @property
+    def labels(self) -> Dict[str, str]:
+        """The `labels` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().labels
+
+
+# ------------------ Filter Model ------------------
+
+
+class ServiceConnectorFilter(UserScopedFilter):
+    """Model to enable advanced filtering of service connectors."""
+
+    FILTER_EXCLUDE_FIELDS: ClassVar[List[str]] = [
+        *UserScopedFilter.FILTER_EXCLUDE_FIELDS,
+        "resource_type",
+        "labels_str",
+        "labels",
+    ]
+    CLI_EXCLUDE_FIELDS: ClassVar[List[str]] = [
+        *UserScopedFilter.CLI_EXCLUDE_FIELDS,
+        "labels_str",
+        "labels",
+    ]
+    name: Optional[str] = Field(
+        default=None,
+        description="The name to filter by",
+    )
+    connector_type: Optional[str] = Field(
+        default=None,
+        description="The type of service connector to filter by",
+    )
+    auth_method: Optional[str] = Field(
+        default=None,
+        title="Filter by the authentication method configured for the "
+        "connector",
+    )
+    resource_type: Optional[str] = Field(
+        default=None,
+        title="Filter by the type of resource that the connector can be used "
+        "to access",
+    )
+    resource_id: Optional[str] = Field(
+        default=None,
+        title="Filter by the ID of the resource instance that the connector "
+        "is configured to access",
+    )
+    labels_str: Optional[str] = Field(
+        default=None,
+        title="Filter by one or more labels. This field can be either a JSON "
+        "formatted dictionary of label names and values, where the values are "
+        'optional and can be set to None (e.g. `{"label1":"value1", "label2": '
+        "null}` ), or a comma-separated list of label names and values (e.g "
+        "`label1=value1,label2=`. If a label name is specified without a "
+        "value, the filter will match all service connectors that have that "
+        "label present, regardless of value.",
+    )
+
+    # Use this internally to configure and access the labels as a dictionary
+    labels: Optional[Dict[str, Optional[str]]] = Field(
+        default=None,
+        title="The labels to filter by, as a dictionary",
+        exclude=True,
+    )
+
+    @model_validator(mode="after")
+    def validate_labels(self) -> "ServiceConnectorFilter":
+        """Parse the labels string into a label dictionary and vice-versa.
+
+        Returns:
+            The validated values.
+        """
+        if self.labels_str is not None:
+            try:
+                self.labels = json.loads(self.labels_str)
+            except json.JSONDecodeError:
+                # Interpret as comma-separated values instead
+                self.labels = {
+                    label.split("=", 1)[0]: label.split("=", 1)[1]
+                    if "=" in label
+                    else None
+                    for label in self.labels_str.split(",")
+                }
+        elif self.labels is not None:
+            self.labels_str = json.dumps(self.labels)
+
+        return self
+
+
+# ------------------ Helper Functions ------------------
+
+
+def _validate_and_configure_resources(
+    connector: Union[
+        ServiceConnectorRequest,
+        ServiceConnectorUpdate,
+        ServiceConnectorResponse,
+    ],
+    connector_type: "ServiceConnectorTypeModel",
+    resource_types: Optional[Union[str, List[str]]] = None,
+    resource_id: Optional[str] = None,
+    configuration: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Validate and configure the resources that a connector can be used to access.
+
+    Args:
+        connector: The connector model to validate and configure.
+        connector_type: The connector type specification used to validate
+            the connector configuration.
+        resource_types: The type(s) of resource that the connector instance
+            can be used to access. If omitted, a multi-type connector is
+            configured.
+        resource_id: Uniquely identifies a specific resource instance that
+            the connector instance can be used to access.
+        configuration: The connector configuration.
+
+    Raises:
+        ValueError: If the connector configuration is not valid.
+        RuntimeError: If the connector instance had not been hydrated yet.
+    """
+    # The fields that need to be updated are different between the request
+    # and response models. For the request model, the fields are in the
+    # connector model itself, while for the response model, they are in the
+    # metadata field.
+    update_connector_metadata: Union[
+        ServiceConnectorRequest,
+        ServiceConnectorUpdate,
+        ServiceConnectorResponseMetadata,
+    ]
+    update_connector_body: Union[
+        ServiceConnectorRequest,
+        ServiceConnectorUpdate,
+        ServiceConnectorResponseBody,
+    ]
+    if isinstance(connector, ServiceConnectorRequest):
+        update_connector_metadata = connector
+        update_connector_body = connector
+    elif isinstance(connector, ServiceConnectorUpdate):
+        update_connector_metadata = connector
+        update_connector_body = connector
+    else:
+        # Updating service connector responses must only be done on hydrated
+        # instances, otherwise the metadata will be missing, and we risk calling
+        # the ZenML store to update the connector with additional information.
+        # This is just a safety measure, but it will never happen because
+        # this method will always be called on a hydrated response.
+        if connector.metadata is None:
+            raise RuntimeError(
+                "Cannot update a service connector response that has not been "
+                "hydrated yet."
+            )
+        update_connector_metadata = connector.get_metadata()
+        update_connector_body = connector.get_body()
+
+    if resource_types is None:
+        resource_type = None
+    elif isinstance(resource_types, str):
+        resource_type = resource_types
+    elif len(resource_types) == 1:
+        resource_type = resource_types[0]
+    else:
+        # Multiple or no resource types specified
+        resource_type = None
+
+    try:
+        # Validate the connector configuration and retrieve the resource
+        # specification
+        assert connector.auth_method is not None
+        (
+            auth_method_spec,
+            resource_spec,
+        ) = connector_type.find_resource_specifications(
+            connector.auth_method,
+            resource_type,
+        )
+    except (KeyError, ValueError) as e:
+        raise ValueError(f"connector configuration is not valid: {e}") from e
+
+    if resource_type and resource_spec:
+        update_connector_body.resource_types = [resource_spec.resource_type]
+        update_connector_body.resource_id = resource_id
+        update_connector_body.supports_instances = (
+            resource_spec.supports_instances
+        )
+    else:
+        # A multi-type connector is associated with all resource types
+        # that it supports, does not have a resource ID configured
+        # and, it's unclear if it supports multiple instances or not
+        update_connector_body.resource_types = list(
+            connector_type.resource_type_dict.keys()
+        )
+        update_connector_body.supports_instances = False
+
+    if configuration is None:
+        # No configuration provided
+        return
+
+    update_connector_metadata.configuration = ServiceConnectorConfiguration()
+
+    # Validate and configure the connector configuration
+    configuration = configuration or {}
+    supported_attrs = []
+    for attr_name, attr_schema in auth_method_spec.config_schema.get(
+        "properties", {}
+    ).items():
+        supported_attrs.append(attr_name)
+        required = attr_name in auth_method_spec.config_schema.get(
+            "required", []
+        )
+
+        attr_any_of = attr_schema.get("anyOf", [])
+
+        if attr_any_of:
+            no_null_attr_any_of = [
+                a for a in attr_any_of if a.get("type", "string") != "null"
+            ]
+
+            if len(no_null_attr_any_of) == 1:
+                secret = no_null_attr_any_of[0].get("format", "") == "password"
+                attr_type = no_null_attr_any_of[0].get("type", "string")
+            else:
+                # TODO: Still not sure what needs to happen here. We will
+                #   only end up here if the auth method config schema has a
+                #   field with a Union[SecretStr, int] or something.
+                raise RuntimeError("Service connector schema error.")
+
+        else:
+            secret = attr_schema.get("format", "") == "password"
+            attr_type = attr_schema.get("type", "string")
+
+        value = configuration.get(attr_name)
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+
+        if required:
+            if value is None:
+                raise ValueError(
+                    "connector configuration is not valid: missing "
+                    f"required attribute '{attr_name}'"
+                )
+        elif value is None:
+            continue
+
+        if secret:
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"connector configuration is not valid: attribute '{attr_name}' "
+                    "is a secret but is not a string"
+                )
+            value = SecretStr(value)
+
+        elif attr_type == "array" and isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.decoder.JSONDecodeError:
+                value = value.split(",")
+
+        update_connector_metadata.configuration[attr_name] = value
+
+    # Warn about attributes that are not part of the configuration schema
+    for attr_name in set(list(configuration.keys())) - set(supported_attrs):
+        logger.warning(
+            f"Ignoring unknown attribute in connector '{connector.name}' "
+            f"configuration {attr_name}. Supported attributes are: "
+            f"{supported_attrs}",
+        )

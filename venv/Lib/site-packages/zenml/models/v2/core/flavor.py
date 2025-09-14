@@ -1,0 +1,402 @@
+#  Copyright (c) ZenML GmbH 2023. All Rights Reserved.
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at:
+#
+#       https://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+#  or implied. See the License for the specific language governing
+#  permissions and limitations under the License.
+"""Models representing flavors."""
+
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
+
+from pydantic import Field
+
+from zenml.constants import STR_FIELD_MAX_LENGTH
+from zenml.enums import StackComponentType
+from zenml.models.v2.base.base import BaseUpdate
+from zenml.models.v2.base.scoped import (
+    UserScopedFilter,
+    UserScopedRequest,
+    UserScopedResponse,
+    UserScopedResponseBody,
+    UserScopedResponseMetadata,
+    UserScopedResponseResources,
+)
+
+if TYPE_CHECKING:
+    from zenml.models import (
+        ServiceConnectorRequirements,
+    )
+
+# ------------------ Request Model ------------------
+
+
+class FlavorRequest(UserScopedRequest):
+    """Request model for stack component flavors."""
+
+    ANALYTICS_FIELDS: ClassVar[List[str]] = [
+        "type",
+        "integration",
+    ]
+
+    name: str = Field(
+        title="The name of the Flavor.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    type: StackComponentType = Field(title="The type of the Flavor.")
+    config_schema: Dict[str, Any] = Field(
+        title="The JSON schema of this flavor's corresponding configuration.",
+    )
+    connector_type: Optional[str] = Field(
+        default=None,
+        title="The type of the connector that this flavor uses.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    connector_resource_type: Optional[str] = Field(
+        default=None,
+        title="The resource type of the connector that this flavor uses.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    connector_resource_id_attr: Optional[str] = Field(
+        default=None,
+        title="The name of an attribute in the stack component configuration "
+        "that plays the role of resource ID when linked to a service "
+        "connector.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    source: str = Field(
+        title="The path to the module which contains this Flavor.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    integration: Optional[str] = Field(
+        title="The name of the integration that the Flavor belongs to.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    logo_url: Optional[str] = Field(
+        default=None,
+        title="Optionally, a url pointing to a png,"
+        "svg or jpg can be attached.",
+    )
+    docs_url: Optional[str] = Field(
+        default=None,
+        title="Optionally, a url pointing to docs, within docs.zenml.io.",
+    )
+    sdk_docs_url: Optional[str] = Field(
+        default=None,
+        title="Optionally, a url pointing to SDK docs,"
+        "within sdkdocs.zenml.io.",
+    )
+    is_custom: bool = Field(
+        title="Whether or not this flavor is a custom, user created flavor.",
+        default=True,
+    )
+
+
+# ------------------ Update Model ------------------
+
+
+class FlavorUpdate(BaseUpdate):
+    """Update model for stack component flavors."""
+
+    name: Optional[str] = Field(
+        title="The name of the Flavor.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    type: Optional[StackComponentType] = Field(
+        title="The type of the Flavor.", default=None
+    )
+    config_schema: Optional[Dict[str, Any]] = Field(
+        title="The JSON schema of this flavor's corresponding configuration.",
+        default=None,
+    )
+    connector_type: Optional[str] = Field(
+        title="The type of the connector that this flavor uses.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    connector_resource_type: Optional[str] = Field(
+        title="The resource type of the connector that this flavor uses.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    connector_resource_id_attr: Optional[str] = Field(
+        title="The name of an attribute in the stack component configuration "
+        "that plays the role of resource ID when linked to a service "
+        "connector.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    source: Optional[str] = Field(
+        title="The path to the module which contains this Flavor.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    integration: Optional[str] = Field(
+        title="The name of the integration that the Flavor belongs to.",
+        max_length=STR_FIELD_MAX_LENGTH,
+        default=None,
+    )
+    logo_url: Optional[str] = Field(
+        title="Optionally, a url pointing to a png,"
+        "svg or jpg can be attached.",
+        default=None,
+    )
+    docs_url: Optional[str] = Field(
+        title="Optionally, a url pointing to docs, within docs.zenml.io.",
+        default=None,
+    )
+    sdk_docs_url: Optional[str] = Field(
+        title="Optionally, a url pointing to SDK docs,"
+        "within sdkdocs.zenml.io.",
+        default=None,
+    )
+    is_custom: Optional[bool] = Field(
+        title="Whether or not this flavor is a custom, user created flavor.",
+        default=None,
+    )
+
+
+# ------------------ Response Model ------------------
+
+
+class FlavorResponseBody(UserScopedResponseBody):
+    """Response body for stack component flavors."""
+
+    type: StackComponentType = Field(title="The type of the Flavor.")
+    integration: Optional[str] = Field(
+        title="The name of the integration that the Flavor belongs to.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    source: str = Field(
+        title="The path to the module which contains this Flavor.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    logo_url: Optional[str] = Field(
+        default=None,
+        title="Optionally, a url pointing to a png,"
+        "svg or jpg can be attached.",
+    )
+    is_custom: bool = Field(
+        title="Whether or not this flavor is a custom, user created flavor.",
+        default=True,
+    )
+
+
+class FlavorResponseMetadata(UserScopedResponseMetadata):
+    """Response metadata for stack component flavors."""
+
+    config_schema: Dict[str, Any] = Field(
+        title="The JSON schema of this flavor's corresponding configuration.",
+    )
+    connector_type: Optional[str] = Field(
+        default=None,
+        title="The type of the connector that this flavor uses.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    connector_resource_type: Optional[str] = Field(
+        default=None,
+        title="The resource type of the connector that this flavor uses.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    connector_resource_id_attr: Optional[str] = Field(
+        default=None,
+        title="The name of an attribute in the stack component configuration "
+        "that plays the role of resource ID when linked to a service "
+        "connector.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+    docs_url: Optional[str] = Field(
+        default=None,
+        title="Optionally, a url pointing to docs, within docs.zenml.io.",
+    )
+    sdk_docs_url: Optional[str] = Field(
+        default=None,
+        title="Optionally, a url pointing to SDK docs,"
+        "within sdkdocs.zenml.io.",
+    )
+
+
+class FlavorResponseResources(UserScopedResponseResources):
+    """Response resources for stack component flavors."""
+
+
+class FlavorResponse(
+    UserScopedResponse[
+        FlavorResponseBody,
+        FlavorResponseMetadata,
+        FlavorResponseResources,
+    ]
+):
+    """Response model for stack component flavors."""
+
+    # Analytics
+    ANALYTICS_FIELDS: ClassVar[List[str]] = [
+        "id",
+        "type",
+        "integration",
+    ]
+
+    name: str = Field(
+        title="The name of the Flavor.",
+        max_length=STR_FIELD_MAX_LENGTH,
+    )
+
+    def get_hydrated_version(self) -> "FlavorResponse":
+        """Get the hydrated version of the flavor.
+
+        Returns:
+            an instance of the same entity with the metadata field attached.
+        """
+        from zenml.client import Client
+
+        return Client().zen_store.get_flavor(self.id)
+
+    # Helper methods
+    @property
+    def connector_requirements(
+        self,
+    ) -> Optional["ServiceConnectorRequirements"]:
+        """Returns the connector requirements for the flavor.
+
+        Returns:
+            The connector requirements for the flavor.
+        """
+        from zenml.models import (
+            ServiceConnectorRequirements,
+        )
+
+        if not self.connector_resource_type:
+            return None
+
+        return ServiceConnectorRequirements(
+            connector_type=self.connector_type,
+            resource_type=self.connector_resource_type,
+            resource_id_attr=self.connector_resource_id_attr,
+        )
+
+    # Body and metadata properties
+    @property
+    def type(self) -> StackComponentType:
+        """The `type` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().type
+
+    @property
+    def integration(self) -> Optional[str]:
+        """The `integration` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().integration
+
+    @property
+    def source(self) -> str:
+        """The `source` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().source
+
+    @property
+    def logo_url(self) -> Optional[str]:
+        """The `logo_url` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().logo_url
+
+    @property
+    def is_custom(self) -> bool:
+        """The `is_custom` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_body().is_custom
+
+    @property
+    def config_schema(self) -> Dict[str, Any]:
+        """The `config_schema` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().config_schema
+
+    @property
+    def connector_type(self) -> Optional[str]:
+        """The `connector_type` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().connector_type
+
+    @property
+    def connector_resource_type(self) -> Optional[str]:
+        """The `connector_resource_type` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().connector_resource_type
+
+    @property
+    def connector_resource_id_attr(self) -> Optional[str]:
+        """The `connector_resource_id_attr` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().connector_resource_id_attr
+
+    @property
+    def docs_url(self) -> Optional[str]:
+        """The `docs_url` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().docs_url
+
+    @property
+    def sdk_docs_url(self) -> Optional[str]:
+        """The `sdk_docs_url` property.
+
+        Returns:
+            the value of the property.
+        """
+        return self.get_metadata().sdk_docs_url
+
+
+# ------------------ Filter Model ------------------
+
+
+class FlavorFilter(UserScopedFilter):
+    """Model to enable advanced stack component flavor filtering."""
+
+    name: Optional[str] = Field(
+        default=None,
+        description="Name of the flavor",
+    )
+    type: Optional[str] = Field(
+        default=None,
+        description="Stack Component Type of the stack flavor",
+    )
+    integration: Optional[str] = Field(
+        default=None,
+        description="Integration associated with the flavor",
+    )
