@@ -11,6 +11,5 @@ venv/
 .env
 .DS_Store
 
-# Generated experiment/output artifacts
+# Generated experiment artifacts
 mlruns/
-outputs/
