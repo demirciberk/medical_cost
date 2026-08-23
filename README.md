@@ -16,6 +16,14 @@ Data loading → train/test split → feature engineering → model training →
 
 The current training step uses a scikit-learn `LinearRegression` pipeline with preprocessing for numerical and categorical features.
 
+![ZenML pipeline](outputs/zenml_pipeline.png)
+
+## Experiment tracking
+
+MLflow is used to track runs, metrics, parameters, and model artifacts.
+
+![MLflow metrics](outputs/MLFlow_metrics.png)
+
 ## Run locally
 
 ```bash
